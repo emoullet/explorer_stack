@@ -16,7 +16,7 @@ import os
 import xacro
 from ament_index_python.packages import get_package_share_path, get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable, TimerAction
 from launch.actions import RegisterEventHandler
 from launch.event_handlers import OnProcessExit
 from launch.conditions import IfCondition, UnlessCondition
@@ -35,6 +35,8 @@ def generate_launch_description():
     world_file = LaunchConfiguration("world_file")
     extra_config_file = LaunchConfiguration("extra_controllers_config")
     use_custom_controllers = LaunchConfiguration("use_custom_controllers")
+    render_engine = LaunchConfiguration("render_engine")
+    software_rendering = LaunchConfiguration("software_rendering")
 
     explorer_controller_config = PathJoinSubstitution(
         [FindPackageShare("explorer_bringup"), "config", "explorer_controller.yaml"]
@@ -91,6 +93,20 @@ def generate_launch_description():
             description="Use custom controllers config file",
         )
     )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "render_engine",
+            default_value="ogre2",
+            description="Gazebo render engine to use for the server and GUI (ogre or ogre2)",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "software_rendering",
+            default_value="false",
+            description="Force software OpenGL rendering for Gazebo",
+        )
+    )
 
     node_robot_state_publisher = Node(
         package="robot_state_publisher",
@@ -128,6 +144,14 @@ def generate_launch_description():
             "-allow_renaming",
             "true",
         ],
+    )
+
+    # Bridge simulation clock so ROS nodes using use_sim_time receive /clock.
+    clock_bridge = Node(
+        package="ros_gz_bridge",
+        executable="parameter_bridge",
+        arguments=["/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock"],
+        output="screen",
     )
 
     joint_state_broadcaster_spawner = Node(
@@ -191,6 +215,24 @@ def generate_launch_description():
         )
     )
 
+    gazebo_rendering_env = [
+        SetEnvironmentVariable(
+            name="LIBGL_ALWAYS_SOFTWARE",
+            value="1",
+            condition=IfCondition(software_rendering),
+        ),
+        SetEnvironmentVariable(
+            name="MESA_LOADER_DRIVER_OVERRIDE",
+            value="llvmpipe",
+            condition=IfCondition(software_rendering),
+        ),
+        SetEnvironmentVariable(
+            name="GALLIUM_DRIVER",
+            value="llvmpipe",
+            condition=IfCondition(software_rendering),
+        ),
+    ]
+
     nodes = [
         # Ignition Server
         IncludeLaunchDescription(
@@ -199,7 +241,9 @@ def generate_launch_description():
             ),
             launch_arguments={
                 'gz_args': [
-                    '-r -s -v4 ', 
+                    '-r -s -v4 --render-engine ',
+                    render_engine,
+                    ' ',
                     PathJoinSubstitution([
                         FindPackageShare('explorer_gazebo'),
                         'worlds',
@@ -214,11 +258,18 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(
                 [FindPackageShare("ros_gz_sim"), "/launch/gz_sim.launch.py"]
             ),
-            launch_arguments={'gz_args': '-g -v4 '}.items(),
+            launch_arguments={
+                'gz_args': [
+                    '-g -v4 --render-engine ',
+                    render_engine,
+                    ' ',
+                ]
+            }.items(),
             condition=IfCondition(gui)
         ),
         node_robot_state_publisher,
+        clock_bridge,
         gz_spawn_entity,
     ]
 
-    return LaunchDescription(declared_arguments + nodes + register_event_handler)
+    return LaunchDescription(declared_arguments + gazebo_rendering_env + nodes + register_event_handler)
