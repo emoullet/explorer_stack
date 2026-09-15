@@ -30,6 +30,7 @@
   <exec_depend>xacro</exec_depend>
   <!--exec_depend>explorer_hardware</exec_depend-->
   <exec_depend>gz_ros2_control</exec_depend>
+  <exec_depend>gripper_pincette</exec_depend>
   
 
 
